@@ -2,13 +2,16 @@ package com.hologramsciences;
 
 import java.io.IOException;
 import java.time.DayOfWeek;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.temporal.ChronoField;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import org.apache.commons.csv.CSVRecord;
@@ -57,14 +60,44 @@ public class CSVRestaurantService {
      *
      */
     public static Option<Restaurant> parse(final CSVRecord r) {
-        return Option.none();
+        if (r == null || r.size() != 2)
+            return Option.none();
+        
+        String name = r.get(0);
+        String openHours = r.get(1);
+        Map<DayOfWeek, Restaurant.OpenHours> parsedMap = parseOpenHour(openHours);
+        return parsedMap.isEmpty() ? Option.none() : Option.some(new Restaurant(name, parsedMap));
     }
 
     /**
      * TODO: Implement me, This is a useful helper method
      */
     public static Map<DayOfWeek, Restaurant.OpenHours> parseOpenHour(final String openhoursString) {
-        return Collections.emptyMap();
+        Map<DayOfWeek, Restaurant.OpenHours> map = new HashMap<>();
+        // For each openHours part
+        for (String openHoursPart : openhoursString.split(";")) {
+            String[] split = openHoursPart.split("\\|");
+            String[] days  = split[0].split(",");
+            String[] hours = split[1].split("-");
+            
+            // Aborting if any empty hour interval is found
+            if (hours[0].equals(hours[1]))
+                return Collections.emptyMap();
+            
+            // Parsing the open hours
+            Restaurant.OpenHours openHours = new Restaurant.OpenHours(
+                LocalTime.parse(hours[0]),
+                LocalTime.parse(hours[1]));
+
+            // For each day of the week
+            for (String dayString : days) {
+                Option<DayOfWeek> day = getDayOfWeek(dayString);
+                if (day.isDefined())
+                    map.put(day.get(), openHours);
+            }
+        }
+        
+        return map;
     }
 
     public CSVRestaurantService() throws IOException {
@@ -91,7 +124,7 @@ public class CSVRestaurantService {
      *  20:00 open = false
      *
      *
-     *  If the startTime endTime spans midnight, then consider an endTime up until 5:00 to be part of same DayOfWeek as the startTime
+     *  If the startTime endTime spans midnight, then consider an endTime up until 6:00 to be part of same DayOfWeek as the startTime
      *
      *  SATURDAY, OpenHours are: 20:00-04:00    SUNDAY, OpenHours are: 10:00-14:00
      *
@@ -101,7 +134,30 @@ public class CSVRestaurantService {
      *
      */
     public List<Restaurant> getOpenRestaurants(final DayOfWeek dayOfWeek, final LocalTime localTime) {
-        return Collections.emptyList();
+        LocalDate sundayDate = LocalDate.parse("2004-04-04"); // This is a Sunday
+        LocalTime spanLimit = LocalTime.parse("06:00"); // Restaurant "Tim's Nighttime Banana Stand" is an exception which spans to 06:00
+        return restaurantList.stream().filter((Restaurant restaurant) -> {
+            for (Map.Entry<DayOfWeek, Restaurant.OpenHours> entry : restaurant.getOpenHoursMap().entrySet()) {
+                DayOfWeek openDayOfWeek = entry.getKey();
+                Restaurant.OpenHours hours = entry.getValue();
+                LocalTime startTime = hours.getStartTime();
+                LocalTime endTime = hours.getEndTime();
+
+                LocalDateTime startDateTime = sundayDate.plusDays(openDayOfWeek.getValue()).atTime(startTime); // Monday has the value of 1
+                LocalDateTime localDateTime = sundayDate.plusDays(dayOfWeek.getValue()).atTime(localTime);
+
+                // Note: This is a replacement for hours.spansMidnight(), which isn't appropriate for this check
+                // (even though using hours.spansMidnight() also passed current test cases)
+                boolean spansMidnight = endTime.isBefore(startTime) && (endTime == spanLimit || endTime.isBefore(spanLimit));
+                LocalDateTime endDateTime = spansMidnight
+                    ? sundayDate.plusDays(openDayOfWeek.getValue() + 1).atTime(endTime)
+                    : sundayDate.plusDays(openDayOfWeek.getValue()).atTime(endTime);
+
+                if (localDateTime.isAfter(startDateTime) && localDateTime.isBefore(endDateTime))
+                    return true;
+            }
+            return false;
+        }).collect(Collectors.toList());
     }
 
     public List<Restaurant> getOpenRestaurantsForLocalDateTime(final LocalDateTime localDateTime) {

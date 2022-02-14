@@ -20,6 +20,9 @@ import org.jooq.meta.jaxb.Target;
 import com.hologramsciences.jooq.tables.records.RestaurantsRecord;
 
 import static com.hologramsciences.jooq.tables.Restaurants.RESTAURANTS;
+import static com.hologramsciences.jooq.tables.OpenHours.OPEN_HOURS;
+import static com.hologramsciences.jooq.tables.MenuItems.MENU_ITEMS;
+import static org.jooq.impl.DSL.*;
 import static java.time.temporal.ChronoField.MINUTE_OF_DAY;
 
 public class JooqRestaurantService {
@@ -39,11 +42,35 @@ public class JooqRestaurantService {
     public List<RestaurantsRecord> getOpenRestaurants(final DayOfWeek dayOfWeek, final LocalTime localTime) throws SQLException {
         final String dayOfWeekString = dayOfWeek.toString();
         final Integer minuteOfDay    = localTime.get(MINUTE_OF_DAY);
-
+        final String previousDayOfWeekString = dayOfWeek.minus(1).toString();
         return withDSLContext(create -> {
             return create
-                    .selectFrom(RESTAURANTS)
-                    .fetch();
+                    .select(RESTAURANTS.fields())
+                    .from(RESTAURANTS)
+                    .innerJoin(OPEN_HOURS).on(OPEN_HOURS.RESTAURANT_ID.eq(RESTAURANTS.ID))
+                    .where(
+                            // Regular, non-spanning case
+                            OPEN_HOURS.START_TIME_MINUTE_OF_DAY.lt(OPEN_HOURS.END_TIME_MINUTE_OF_DAY)
+                            .and(OPEN_HOURS.DAY_OF_WEEK.eq(dayOfWeekString))
+                            .and(OPEN_HOURS.START_TIME_MINUTE_OF_DAY.lt(minuteOfDay))
+                            .and(OPEN_HOURS.END_TIME_MINUTE_OF_DAY.gt(minuteOfDay))
+                        .or(
+                            // Midnight spanning case
+                            OPEN_HOURS.START_TIME_MINUTE_OF_DAY.gt(OPEN_HOURS.END_TIME_MINUTE_OF_DAY)
+                            .and(OPEN_HOURS.END_TIME_MINUTE_OF_DAY.lt(361))
+                            .and(
+                                // Before midnight subcase
+                                OPEN_HOURS.DAY_OF_WEEK.eq(dayOfWeekString)
+                                .and(OPEN_HOURS.START_TIME_MINUTE_OF_DAY.lt(minuteOfDay))
+                                .or(
+                                    // After midnight subcase
+                                    OPEN_HOURS.DAY_OF_WEEK.eq(previousDayOfWeekString)
+                                    .and(OPEN_HOURS.END_TIME_MINUTE_OF_DAY.gt(minuteOfDay))
+                                )
+                            )
+                        )
+                    )
+                    .fetchInto(RESTAURANTS);
         });
     }
 
@@ -59,8 +86,12 @@ public class JooqRestaurantService {
     public List<RestaurantsRecord> getRestaurantsWithMenuOfSizeGreaterThanOrEqualTo(final Integer menuSize) throws SQLException {
         return withDSLContext(create -> {
             return create
-                    .selectFrom(RESTAURANTS)
-                    .fetch();
+                    .select(RESTAURANTS.fields())
+                    .from(RESTAURANTS)
+                    .leftJoin(MENU_ITEMS).on(MENU_ITEMS.RESTAURANT_ID.eq(RESTAURANTS.ID))
+                    .groupBy(RESTAURANTS.ID)
+                    .having(count().ge(menuSize))
+                    .fetchInto(RESTAURANTS);
         });
     }
 

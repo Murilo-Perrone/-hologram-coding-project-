@@ -48,15 +48,21 @@ public class SQLRestaurantService {
         final Integer minuteOfDay    = localTime.get(MINUTE_OF_DAY);
 
         final String query = String.join("\n"
-                ,
-                 "select * from restaurants"
-                , ""
-                , ""
-                , ""
-                , ""
+                , "SELECT r.*"
+                , "FROM restaurants r"
+                , "INNER JOIN open_hours o on o.restaurant_id = r.id"
+                , "WHERE (start_time_minute_of_day < end_time_minute_of_day" // Regular, non-spanning case
+                , "       AND day_of_week = ? AND start_time_minute_of_day < ? AND end_time_minute_of_day > ?)"
+                , "   OR"
+                , "      (start_time_minute_of_day > end_time_minute_of_day AND end_time_minute_of_day <= 360" // Midnight spanning case
+                , "       AND ("
+                , "              (day_of_week = ? AND start_time_minute_of_day < ?)" // Before midnight subcase (dayOfWeekString, minuteOfDay)
+                , "              OR (day_of_week = ? AND end_time_minute_of_day > ?)" // After midnight subcase (previousDayOfWeekString, minuteOfDay)
+                , "           )"
+                , "      )"
         );
 
-        return runQueryAndParseRestaurants(query, dayOfWeekString, minuteOfDay);
+        return runQueryAndParseRestaurants(query, dayOfWeekString, minuteOfDay, minuteOfDay, dayOfWeekString, minuteOfDay, previousDayOfWeekString, minuteOfDay);
     }
 
     /**
@@ -72,12 +78,11 @@ public class SQLRestaurantService {
 
 
         final String query = String.join("\n"
-                ,
-                " select * from restaurants"
-                , ""
-                , ""
-                , ""
-                , ""
+                , "SELECT r.*"
+                , "FROM restaurants r"
+                , "LEFT JOIN menu_items m on r.id = m.restaurant_id"
+                , "GROUP BY r.id"
+                , "HAVING COUNT(m.id) >= ?"
         );
 
         return runQueryAndParseRestaurants(query, menuSize);
